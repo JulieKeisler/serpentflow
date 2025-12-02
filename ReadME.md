@@ -27,8 +27,8 @@ Use nc_to_tensors.py to convert GCM and reanalysis NetCDF files to .pt tensors:
 python nc_to_tensors.py \
     --path_GCM data/gcm.nc \
     --path_REA data/rea.nc \
-    --variables_GCM var1 var2 \
-    --variables_REA var1 var2 \
+    --variables_GCM var1 \
+    --variables_REA var2 \
     --interpolation spectral \
     --max_train_data 2000 \
     --name_GCM GCM \
