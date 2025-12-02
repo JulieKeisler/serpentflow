@@ -21,7 +21,7 @@ python inference_serpentflow.py \
 import argparse
 import torch
 from torch.utils.data import DataLoader
-
+import os
 from src.inference import integrate_and_store
 from utils.training_utils import EMA
 from src.datasets import SerpentFlowDataset
@@ -98,6 +98,7 @@ def main():
     # Inference
     # ---------------------------
     print("Running inference...")
+    os.makedirs("data/results/", exist_ok=True)
     integrate_and_store(
         dataloader=dataloader,
         model_to=model,
