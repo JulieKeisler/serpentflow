@@ -63,7 +63,7 @@ def make_train_cfg(data_type: str):
         ),
         'ERA5': dict(
             batch_size=64,
-            epochs=20,
+            epochs=200,
             lr=2e-4,
             accum_iter=1
         ),
