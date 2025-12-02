@@ -17,6 +17,7 @@ python nc_to_tensors.py \
 import argparse
 import xarray as xr
 import torch
+import os
 from utils.data_utils import upsample_and_lowpass
 
 def main():
@@ -67,14 +68,29 @@ def main():
 
     # Save tensors
     print("Saving tensors to data/ folder...")
-    torch.save(torch.tensor(superres_gcm_train.transpose('time', 'lat', 'lon').data, dtype=torch.float32).unsqueeze(1),
-               f"data/{args.name_GCM}_train.pt")
-    torch.save(torch.tensor(superres_gcm_test.transpose('time', 'lat', 'lon').data, dtype=torch.float32).unsqueeze(1),
-               f"data/{args.name_GCM}_test.pt")
-    torch.save(torch.tensor(superres_rea_train.transpose('time', 'lat', 'lon').data, dtype=torch.float32).unsqueeze(1),
-               f"data/{args.name_REA}_train.pt")
-    torch.save(torch.tensor(superres_rea_test.transpose('time', 'lat', 'lon').data, dtype=torch.float32).unsqueeze(1),
-               f"data/{args.name_REA}_test.pt")
+
+    os.makedirs("data", exist_ok=True)
+
+    # Mapping tensors to filenames
+    tensors_to_save = {
+        f"{args.name_GCM}_train.pt": superres_gcm_train.transpose('time', 'lat', 'lon').to_array(),
+        f"{args.name_GCM}_test.pt": superres_gcm_test.transpose('time', 'lat', 'lon').to_array(),
+        f"{args.name_REA}_train.pt": superres_rea_train.transpose('time', 'lat', 'lon'),
+        f"{args.name_REA}_test.pt": superres_rea_test.transpose('time', 'lat', 'lon')
+    }
+
+    for filename, ds in tensors_to_save.items():
+        # Transpose to (time, lat, lon) and convert to torch tensor
+        tensor = torch.tensor(ds.data, dtype=torch.float32).squeeze()
+        
+        # If single variable, add channel dimension
+        tensor = tensor.unsqueeze(1)
+        
+        # Save tensor
+        path = os.path.join("data", filename)
+        torch.save(tensor, path)
+        print(f"Saved {path}, tensor shape: {tensor.shape}")
+
     print("Done! All tensors saved successfully.")
 
 if __name__ == "__main__":

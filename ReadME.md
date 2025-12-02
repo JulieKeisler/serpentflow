@@ -141,7 +141,7 @@ SerpentFlow/
 
 ## 7. Notes
 
-- All tensors are assumed to be in (N, C, H, W) format, with C=1 by default, multivariate downscaling has not been tried yet.
+- All tensors are assumed to be in (N, C, H, W) format, with C=1. /!\/!\/!\ Multivariate downscaling has not been tried yet.
 
 - EMA is used for stabilizing flow matching
 

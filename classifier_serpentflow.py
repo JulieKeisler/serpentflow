@@ -77,83 +77,86 @@ def main():
     test_B = torch.load(args.path_test_B, map_location="cpu")
 
     # ---------------------------
+    # Balance datasets
+    # ---------------------------
+    if train_A.shape[0] > train_B.shape[0]:
+        idx = torch.randperm(train_A.shape[0])[:train_B.shape[0]]
+        train_A = train_A[idx]
+
+    if test_A.shape[0] > test_B.shape[0]:
+        idx = torch.randperm(test_A.shape[0])[:test_B.shape[0]]
+        test_A = test_A[idx]
+
+    if not args.get_r_cut:
+        print(f"Balanced training: {train_A.shape[0]} samples in A, {train_B.shape[0]} in B")
+        print(f"Balanced testing: {test_A.shape[0]} samples in A, {test_B.shape[0]} in B")
+
+    # ---------------------------
     # Initial dataset + model
     # ---------------------------
     ds_train = TwoClassImageDataset(train_A, train_B)
     dl_train = DataLoader(ds_train, batch_size=tcfg['batch_size'], shuffle=True)
-
     model = BinaryImageClassifier(in_channels=ds_train[0][0].shape[0]).to(device)
 
-    # ---------------------------
-    # Initial training
-    # ---------------------------
-    print("Training initial classifier on raw data...")
+    if not args.get_r_cut:
+        print("Training initial classifier on raw data...")
+
     model = train_classifier(model, dl_train, epochs=20, device=device)
 
-    # ---------------------------
-    # Initial evaluation
-    # ---------------------------
     ds_test = TwoClassImageDataset(test_A, test_B)
     dl_test = DataLoader(ds_test, batch_size=tcfg['batch_size'], shuffle=True)
     acc = classifier_prediction(model, dl_test, device)
 
-    print(f"Initial classifier accuracy = {acc:.4f}")
+    if not args.get_r_cut:
+        print(f"Initial classifier accuracy = {acc:.4f}")
 
     # ---------------------------
     # Search cutoff frequency
     # ---------------------------
     r_cut = args.start_r_cut + 1
 
-    print("Searching cutoff frequency...")
-
     while acc > 0.6 and r_cut >= 0:
-
         r_cut -= 1
-        print(f"Trying cutoff = {r_cut}")
+        if not args.get_r_cut:
+            print(f"Trying cutoff = {r_cut}")
 
         # Apply low-pass filtering
         lp_train_A = low_pass_tensor_batch(train_A, r_cut, apply_noise=False)
         lp_train_B = low_pass_tensor_batch(train_B, r_cut, apply_noise=False)
 
-        # Compute normalization statistics on training set only
+        # Normalize
         min_A, max_A = lp_train_A.min(), lp_train_A.max()
         min_B, max_B = lp_train_B.min(), lp_train_B.max()
-
-        # Normalize
         lp_train_A = normalize_using_stats(lp_train_A, min_A, max_A)
         lp_train_B = normalize_using_stats(lp_train_B, min_B, max_B)
 
-        # New training dataset
+        # Retrain
         ds_lp_train = TwoClassImageDataset(lp_train_A, lp_train_B)
         dl_train = DataLoader(ds_lp_train, batch_size=tcfg['batch_size'], shuffle=True)
-
-        # Retrain classifier from scratch
         model = BinaryImageClassifier(in_channels=ds_lp_train[0][0].shape[0]).to(device)
         model = train_classifier(model, dl_train, epochs=20, device=device)
 
-        # --- Test phase ---
-        lp_test_A = low_pass_tensor_batch(test_A, r_cut, apply_noise=False)
-        lp_test_B = low_pass_tensor_batch(test_B, r_cut, apply_noise=False)
-
-        # IMPORTANT: normalize test using training statistics
-        lp_test_A = normalize_using_stats(lp_test_A, min_A, max_A)
-        lp_test_B = normalize_using_stats(lp_test_B, min_B, max_B)
-
+        # Test
+        lp_test_A = normalize_using_stats(low_pass_tensor_batch(test_A, r_cut, apply_noise=False), min_A, max_A)
+        lp_test_B = normalize_using_stats(low_pass_tensor_batch(test_B, r_cut, apply_noise=False), min_B, max_B)
         ds_lp_test = TwoClassImageDataset(lp_test_A, lp_test_B)
         dl_test = DataLoader(ds_lp_test, batch_size=tcfg['batch_size'], shuffle=False)
-
         acc = classifier_prediction(model, dl_test, device)
+
+        if args.get_r_cut:
+            continue  # do not print anything
         print(f"Accuracy at r_cut={r_cut}: {acc:.4f}")
-        print(r_cut)  # Only print r_cut for the bash script
-        return
 
     # ---------------------------
-    # Result
+    # Final r_cut output
     # ---------------------------
-    print("====================================")
-    print(f"Final selected cutoff frequency: {r_cut}")
-    print(f"Final classifier accuracy: {acc:.4f}")
-    print("====================================")
+    if args.get_r_cut:
+        print(r_cut)  # only the number for bash
+    else:
+        print("====================================")
+        print(f"Final selected cutoff frequency: {r_cut}")
+        print(f"Final classifier accuracy: {acc:.4f}")
+        print("====================================")
 
 
 if __name__ == "__main__":

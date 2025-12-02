@@ -38,17 +38,16 @@ srun python -u nc_to_tensors.py \
 # Capture r_cut from stdout or write to file in classifier script
 R_CUT=$(srun python -u classifier_serpentflow.py \
     --path_train_A data/ACCESS_train.pt \
-    --path_train_B data/ACCESS_test.pt \
-    --path_test_A data/ERA5_train.pt \
+    --path_train_B data/ERA5_train.pt \
+    --path_test_A data/ACCESS_test.pt \
     --path_test_B data/ERA5_test.pt \
     --get_r_cut)
-
 echo "Detected r_cut = $R_CUT"
 
 # ---------------------------
 # 3. Train flow matching model
 # ---------------------------
-srun python -u training_serpentflow.py \
+srun python -u train_serpentflow.py \
     --path_B data/ERA5_train.pt \
     --r_cut $R_CUT \
     --name_config ERA5 \

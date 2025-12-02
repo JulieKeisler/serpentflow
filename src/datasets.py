@@ -58,7 +58,13 @@ class SerpentFlowDataset(Dataset):
             max_val = lp_data[:, c].max()
             lp_data[:, c] = (lp_data[:, c] - min_val) / (max_val - min_val + 1e-8)
 
+        for c in range(self.data.shape[1]):
+            min_val = self.data[:, c].min()
+            max_val = self.data[:, c].max()
+            self.data[:, c] = (self.data[:, c] - min_val) / (max_val - min_val + 1e-8)
+
         # Scale to [-1, 1] for neural network compatibility
+        self.data = self.data * 2 - 1
         self.lp_data = lp_data * 2 - 1
 
     def __len__(self):

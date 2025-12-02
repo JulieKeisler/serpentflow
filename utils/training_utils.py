@@ -230,27 +230,40 @@ def train_classifier(model, dataloader, epochs=5, lr=1e-3, device="cpu"):
             preds = (outputs > 0.5).long()
             correct += (preds.squeeze() == y.squeeze().long()).sum().item()
             total += y.size(0)
-
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {running_loss/total:.4f}, Acc: {correct/total:.4f}")
-
     return model
 
 
 def classifier_prediction(model, dataloader, device="cpu"):
     """
     Compute accuracy of a binary classifier.
+    
+    Handles logits or probability outputs, and works with y of shape (N,) or (N,1).
+    
+    Args:
+        model (torch.nn.Module): binary classifier
+        dataloader (torch.utils.data.DataLoader): data loader
+        device (str): device to run on ("cpu" or "cuda")
+        
+    Returns:
+        float: classification accuracy in [0, 1]
     """
     model.eval()
     model.to(device)
-    all_preds, all_labels = [], []
+    correct, total = 0, 0
     with torch.no_grad():
         for x, y in dataloader:
-            x = x.to(device)
+            x, y = x.to(device), y.to(device)
             outputs = model(x)
-            preds = (outputs > 0.5).long().cpu()
-            all_preds.extend(preds.flatten())
-            all_labels.extend(y.flatten())
-    all_preds = torch.tensor(all_preds)
-    all_labels = torch.tensor(all_labels)
-    accuracy = ((all_preds == all_labels).sum() / len(all_labels)).item()
-    return accuracy
+            
+            # Ensure outputs are probabilities
+            if outputs.dtype.is_floating_point and outputs.max() > 1.0:
+                outputs = torch.sigmoid(outputs)
+            
+            preds = (outputs > 0.5).long().view(-1)
+            y_true = y.view(-1).long()
+            
+            correct += (preds == y_true).sum().item()
+            total += y_true.size(0)
+    
+    return correct / total
+
