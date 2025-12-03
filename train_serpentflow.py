@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--name_config", type=str, default="ERA5", help="Dataset configuration name")
     parser.add_argument("--save_name", type=str, default="experiment", help="Model save identifier")
     parser.add_argument("--num_generations", type=int, default=4, help="Number of samples generated after training")
+    parser.add_argument("--method", type=str, default="fourier", help="Low pass method")
+    parser.add_argument("--mask_path", type=str, default="")
 
     args = parser.parse_args()
 
@@ -57,7 +59,7 @@ def main():
     # Dataset
     # ---------------------------
     print("Loading SerpentFlow dataset...")
-    dataset = SerpentFlowDataset(args.path_B, args.r_cut)
+    dataset = SerpentFlowDataset(args.path_B, args.r_cut, method=args.method)
 
     # ---------------------------
     # Model definition
@@ -94,12 +96,17 @@ def main():
     # Training
     # ---------------------------
     print("Starting Flow Matching training...")
+    if len(args.mask_path)>0:
+        mask = torch.load(args.mask_path)
+    else:
+        mask=None
     model = train_flow_matching(
         model=model,
         dataset=dataset,
         device=device,
         name=args.save_name,
         ckpt=checkpoint,
+        mask=mask,
         **tcfg
     )
 

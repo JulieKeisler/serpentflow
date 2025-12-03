@@ -168,24 +168,57 @@ class AttentionBlock(nn.Module):
 
 
 class QKVAttention(nn.Module):
-    def __init__(self, n_heads):
+    """
+    Memory-efficient QKV attention computing attention in query chunks.
+    Replaces the previous N x N dense weight to avoid OOM.
+    """
+    def __init__(self, n_heads, chunk_size: int = 256):
         super().__init__()
         self.n_heads = n_heads
+        self.chunk_size = chunk_size  # tune this: 128 / 256 / 512
 
     def forward(self, qkv):
+        # qkv: (bs, width, length) where width = 3 * n_heads * ch
         bs, width, length = qkv.shape
         assert width % (3 * self.n_heads) == 0
-        ch = width // (3 * self.n_heads)
-        q, k, v = qkv.chunk(3, dim=1)
-        scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = torch.einsum(
-            "bct,bcs->bts",
-            (q * scale).reshape(bs * self.n_heads, ch, length),
-            (k * scale).reshape(bs * self.n_heads, ch, length)
-        )
-        weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
-        h = torch.einsum("bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length))
-        return h.reshape(bs, -1, length)
+        ch = width // (3 * self.n_heads)  # head dim
+        # split
+        q, k, v = qkv.chunk(3, dim=1)  # each (bs,  n_heads*ch, length)
+        # reshape to (bs, heads, length, ch)
+        q = q.view(bs, self.n_heads, ch, length).permute(0, 1, 3, 2).contiguous()
+        k = k.view(bs, self.n_heads, ch, length).permute(0, 1, 3, 2).contiguous()
+        v = v.view(bs, self.n_heads, ch, length).permute(0, 1, 3, 2).contiguous()
+
+        scale = 1.0 / math.sqrt(ch)
+        # output buffer
+        out = q.new_empty(bs, self.n_heads, length, ch)
+
+        # compute attention in chunks over the query dimension to avoid building (N,N)
+        for i in range(0, length, self.chunk_size):
+            i_end = min(i + self.chunk_size, length)
+            q_chunk = q[:, :, i:i_end, :]  # (bs, heads, chunk, ch)
+
+            # scores: (bs, heads, chunk, length)
+            # matmul: (bs,heads,chunk,ch) @ (bs,heads,ch,length) -> (bs,heads,chunk,length)
+            scores = torch.matmul(q_chunk, k.transpose(-2, -1)) * scale
+
+            # numerical stability & compute softmax in float32 to be safe
+            scores_f = scores.float()
+            attn = torch.softmax(scores_f, dim=-1).type_as(scores)
+            # attend v: (bs,heads,chunk,length) @ (bs,heads,length,ch) -> (bs,heads,chunk,ch)
+            out_chunk = torch.matmul(attn, v)
+
+            out[:, :, i:i_end, :] = out_chunk
+
+            # free temporaries
+            del q_chunk, scores, scores_f, attn, out_chunk
+            # optional but helpful in extreme cases
+            torch.cuda.empty_cache()
+
+        # reshape back to (bs, width_without_3, length) i.e. (bs, n_heads*ch, length)
+        out = out.permute(0, 1, 3, 2).contiguous().view(bs, -1, length)
+        return out
+
 class UNetWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()

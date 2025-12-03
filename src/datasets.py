@@ -16,6 +16,13 @@ import torch
 from torch.utils.data import Dataset
 from utils.data_utils import low_pass_tensor_batch
 
+def normalize_column(x):
+    mask = torch.isfinite(x)
+    if not mask.any():
+        return x  # leave as-is or fill with 0
+    min_val, max_val = x[mask].min(), x[mask].max()
+    x[mask] = (x[mask] - min_val) / (max_val - min_val + 1e-8)
+    return x
 
 class SerpentFlowDataset(Dataset):
     """
@@ -34,7 +41,7 @@ class SerpentFlowDataset(Dataset):
         }
     """
 
-    def __init__(self, ds_path, r_cut, apply_noise=True):
+    def __init__(self, ds_path, r_cut, apply_noise=True, method="fourier"):
         """
         Args:
             ds_path (str): path to torch tensor (.pt file)
@@ -44,24 +51,22 @@ class SerpentFlowDataset(Dataset):
         super().__init__()
 
         self.r_cut = r_cut
+        self.method=method
         self.apply_noise = apply_noise
 
         # Load full-resolution dataset
         self.data = torch.load(ds_path, map_location="cpu")
 
         # Precompute low-frequency component
-        lp_data = low_pass_tensor_batch(self.data, self.r_cut, apply_noise=False)
+        lp_data = low_pass_tensor_batch(self.data, self.r_cut, apply_noise=False, method=self.method)
 
         # Channel-wise normalization (using dataset statistics)
+
         for c in range(lp_data.shape[1]):
-            min_val = lp_data[:, c].min()
-            max_val = lp_data[:, c].max()
-            lp_data[:, c] = (lp_data[:, c] - min_val) / (max_val - min_val + 1e-8)
+            lp_data[:, c] = normalize_column(lp_data[:, c])
 
         for c in range(self.data.shape[1]):
-            min_val = self.data[:, c].min()
-            max_val = self.data[:, c].max()
-            self.data[:, c] = (self.data[:, c] - min_val) / (max_val - min_val + 1e-8)
+            self.data[:, c] = normalize_column(self.data[:, c])
 
         # Scale to [-1, 1] for neural network compatibility
         self.data = self.data * 2 - 1
@@ -83,7 +88,8 @@ class SerpentFlowDataset(Dataset):
             _, noise_lr = low_pass_tensor_batch(
                 data,
                 self.r_cut,
-                apply_noise=self.apply_noise
+                apply_noise=self.apply_noise,
+                method=self.method
             )
             noisy_data = noisy_data + noise_lr
 

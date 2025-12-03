@@ -14,7 +14,13 @@ import torch
 import torch.nn.functional as F
 
 
-def low_pass_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False):
+def low_pass_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False, method="fourier"):
+    if method == "fourier":
+        return fourier_tensor_batch(imgs, r_cut, apply_noise)
+    else:
+        return low_pass_blur_ignore_nans(imgs, sigma=20-r_cut, apply_noise=apply_noise)
+
+def fourier_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False):
     """
     Apply a circular low-pass filter in Fourier space to a batch of images.
 
@@ -91,6 +97,61 @@ def low_pass_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = Fa
         high_freq.squeeze(0) if high_freq.shape[0] == 1 else high_freq
     )
 
+def gaussian_kernel_1d(sigma, max_size=101, device='cpu'):
+    size = int(2 * torch.ceil(torch.tensor(3.0 * sigma)) + 1)
+    size = min(size, max_size)
+    x = torch.arange(size, dtype=torch.float32, device=device) - size // 2
+    kernel = torch.exp(-(x**2) / (2 * sigma**2))
+    kernel /= kernel.sum()
+    return kernel
+
+
+def low_pass_blur_ignore_nans(imgs: torch.Tensor, sigma: float, apply_noise=False):
+    if imgs.ndim == 3:
+        imgs = imgs.unsqueeze(0)
+    N, C, H, W = imgs.shape
+    device = imgs.device
+
+    # Gaussian kernels
+    k_lat = gaussian_kernel_1d(sigma, device=device).view(1, 1, -1, 1)
+    k_lon = gaussian_kernel_1d(sigma, device=device).view(1, 1, 1, -1)
+    pad_lat = k_lat.shape[2] // 2
+    pad_lon = k_lon.shape[3] // 2
+
+    # Mask to ignore NaNs
+    mask = (~torch.isnan(imgs)).float()
+    imgs_zeroed = torch.nan_to_num(imgs, nan=0.0)
+
+    # Convolution
+    imgs_reshape = imgs_zeroed.reshape(N*C, 1, H, W)
+    mask_reshape = mask.reshape(N*C, 1, H, W)
+    blurred = F.conv2d(F.pad(imgs_reshape, (0,0,pad_lat,pad_lat)), k_lat)
+    blurred = F.conv2d(F.pad(blurred, (pad_lon,pad_lon,0,0)), k_lon)
+
+    mask_blur = F.conv2d(F.pad(mask_reshape, (0,0,pad_lat,pad_lat)), k_lat)
+    mask_blur = F.conv2d(F.pad(mask_blur, (pad_lon,pad_lon,0,0)), k_lon)
+    mask_blur = torch.clamp(mask_blur, min=1e-6)
+
+    blurred /= mask_blur
+    blurred = blurred.reshape(N, C, H, W)
+    blurred[mask == 0] = float('nan')
+
+    if not apply_noise:
+        return blurred.squeeze(0) if blurred.shape[0] == 1 else blurred
+
+    # High-frequency noise
+    noise = torch.randn_like(imgs)
+    noise_reshape = noise.reshape(N*C, 1, H, W)
+    noise_blurred = F.conv2d(F.pad(noise_reshape, (0,0,pad_lat,pad_lat)), k_lat)
+    noise_blurred = F.conv2d(F.pad(noise_blurred, (pad_lon,pad_lon,0,0)), k_lon)
+    noise_blurred = noise_blurred.reshape(N, C, H, W)
+
+    high_freq = noise - noise_blurred
+
+    return (
+        blurred.squeeze(0) if blurred.shape[0] == 1 else blurred,
+        high_freq.squeeze(0) if high_freq.shape[0] == 1 else high_freq
+    )
 
 def upsample_and_lowpass(x: torch.Tensor, target_size: tuple, cutoff: float = 0.2) -> torch.Tensor:
     """

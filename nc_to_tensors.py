@@ -35,13 +35,23 @@ def main():
 
     print("Loading datasets...")
     coarse_gcm = xr.load_dataset(args.path_GCM)[args.variables_GCM].load()
+    coarse_gcm = coarse_gcm.sel(time=coarse_gcm.time.dt.year >= 1985)
     superres_reanalysis = xr.load_dataset(args.path_REA)[args.variables_REA].load()
+    superres_reanalysis = superres_reanalysis.sel(time=superres_reanalysis.time.dt.year >= 1985)
+    rename_dict = {}
+    if "x" in superres_reanalysis.dims:
+        rename_dict["x"] = "lon"
+    if "y" in superres_reanalysis.dims:
+        rename_dict["y"] = "lat"
+
+    if rename_dict:
+        superres_reanalysis = superres_reanalysis.rename(rename_dict)
     print(f"Loaded GCM shape: {coarse_gcm.shape}, REA shape: {superres_reanalysis.shape}")
 
     # Interpolation / upsampling
     if args.interpolation == "linear":
         print("Applying linear interpolation...")
-        superres_gcm = coarse_gcm.interp(lat=superres_reanalysis.lat, lon=superres_reanalysis.lon)
+        superres_gcm = coarse_gcm.interp(lat=superres_reanalysis.lat, lon=superres_reanalysis.lon).to_dataset()
     elif args.interpolation == "spectral":
         print("Applying spectral upsampling + low-pass filter...")
         superres_gcm_tensor = upsample_and_lowpass(
@@ -50,14 +60,14 @@ def main():
             cutoff=0.06
         )
         superres_gcm = xr.Dataset(
-            data_vars={"GCM": (["time", "lat", "lon"], superres_gcm_tensor)},
+            data_vars={args.variables_GCM: (["time", "lat", "lon"], superres_gcm_tensor)},
             coords={
                 "time": coarse_gcm.time.data,
                 "lat": superres_reanalysis.lat.data,
                 "lon": superres_reanalysis.lon.data
             }
         )
-    print(f"Upsampled GCM shape: {superres_gcm['GCM'].shape}")
+    print(f"Upsampled GCM shape: {superres_gcm[args.variables_GCM].shape}")
 
     # Split train/test
     print("Splitting datasets into train/test...")

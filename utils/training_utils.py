@@ -157,31 +157,38 @@ def skewed_timestep_sample(num_samples: int, device: torch.device) -> torch.Tens
     time = 1 / (1 + sigma)
     return torch.clip(time, min=0.0001, max=1.0)
 
-
+def dbg(x, name):
+    print(name, x.shape, x.numel()*4/1e9, "GB")
+    
 def train_one_epoch(model, data_loader, optimizer, lr_schedule, device,
-                    epoch, skewed_timesteps=True, accum_iter=1, test_run=False, debug=False):
+                    epoch, loss_scaler, path, skewed_timesteps=True, accum_iter=1, test_run=False, debug=False, mask=None):
     """
     Training loop for one epoch for flow-matching.
     """
     model.train(True)
     epoch_loss = MeanMetric().to(device)
-    loss_scaler = NativeScalerWithGradNormCount()
-    path = CondOTProbPath()
 
     for data_iter_step, data in enumerate(data_loader):
-        optimizer.zero_grad(set_to_none=True)
+        if data_iter_step % accum_iter == 0:
+            optimizer.zero_grad(set_to_none=True)
+
         samples = data['data'].to(device)
         noise = data.get('noisy', torch.randn_like(samples)).to(device)
 
         t = skewed_timestep_sample(samples.shape[0], device=device) if skewed_timesteps \
             else torch.rand(samples.shape[0], device=device)
 
-        path_sample = path.sample(t=t, x_0=noise, x_1=samples)
+        path_sample = path.sample(t=t, x_0=torch.nan_to_num_(noise), x_1=torch.nan_to_num_(samples))
         x_t, u_t = path_sample.x_t, path_sample.dx_t
 
         with torch.amp.autocast("cuda"):
             pred_vel = model(x_t, t)
-            loss = (pred_vel - u_t).pow(2).mean()
+            if mask is None:
+                loss = (pred_vel - u_t)
+            else:
+                loss = (pred_vel - u_t)*mask
+            loss = loss.pow(2).mean()
+        
 
         loss /= accum_iter
         apply_update = (data_iter_step + 1) % accum_iter == 0
@@ -206,7 +213,7 @@ def train_one_epoch(model, data_loader, optimizer, lr_schedule, device,
     return float(epoch_loss.compute().detach().cpu())
 
 
-def train_classifier(model, dataloader, epochs=5, lr=1e-3, device="cpu"):
+def train_classifier(model, dataloader, epochs=5, lr=1e-3, device="cpu", mask=None):
     """
     Train a simple binary image classifier.
     """
@@ -221,19 +228,24 @@ def train_classifier(model, dataloader, epochs=5, lr=1e-3, device="cpu"):
         for x, y in dataloader:
             x, y = x.to(device), y.float().to(device).unsqueeze(1)
             optimizer.zero_grad()
-            outputs = model(x)
+            if mask is not None:
+                outputs = model(torch.nan_to_num_(x)*mask)
+            else:
+                outputs = model(torch.nan_to_num_(x))
             loss = criterion(outputs, y)
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item() * x.size(0)
             preds = (outputs > 0.5).long()
             correct += (preds.squeeze() == y.squeeze().long()).sum().item()
             total += y.size(0)
+        epoch_loss = running_loss / total
+        acc = correct / total
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Acc: {acc:.4f}, {(torch.nan_to_num_(x)*mask).min()} | {(torch.nan_to_num_(x)*mask).max()}")
     return model
 
 
-def classifier_prediction(model, dataloader, device="cpu"):
+def classifier_prediction(model, dataloader, device="cpu", mask=None):
     """
     Compute accuracy of a binary classifier.
     
@@ -253,7 +265,10 @@ def classifier_prediction(model, dataloader, device="cpu"):
     with torch.no_grad():
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
-            outputs = model(x)
+            if mask is not None:
+                outputs = model(torch.nan_to_num_(x)*mask)
+            else:
+                outputs = model(torch.nan_to_num_(x))
             
             # Ensure outputs are probabilities
             if outputs.dtype.is_floating_point and outputs.max() > 1.0:

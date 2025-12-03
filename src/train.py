@@ -15,8 +15,8 @@ import os
 import math
 import torch
 from torch.utils.data import DataLoader
-
-from utils.training_utils import train_one_epoch
+from flow_matching.path import CondOTProbPath
+from utils.training_utils import train_one_epoch, NativeScalerWithGradNormCount
 
 
 def train_flow_matching(
@@ -31,6 +31,7 @@ def train_flow_matching(
     device="cuda",
     betas=(0.9, 0.95),
     save_dir="checkpoints",
+    mask=None,
     **args
 ):
     """
@@ -89,6 +90,8 @@ def train_flow_matching(
             return step / warmup_steps
         progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
         return 0.5 * (1 + math.cos(math.pi * progress))
+    loss_scaler = NativeScalerWithGradNormCount()
+    path = CondOTProbPath()
 
     # ---------------------------
     # Resume training if needed
@@ -121,7 +124,8 @@ def train_flow_matching(
     # Training loop
     # ---------------------------
     print("Starting Flow Matching training...")
-
+    
+    mask = None
     for epoch in range(start_epoch, epochs + 1):
 
         epoch_loss = train_one_epoch(
@@ -131,8 +135,12 @@ def train_flow_matching(
             lr_schedule=lr_schedule,
             device=device,
             epoch=epoch,
-            accum_iter=accum_iter
+            accum_iter=accum_iter,
+            mask=mask,
+            loss_scaler=loss_scaler,
+            path=path
         )
+
 
         print(f"[Epoch {epoch:03d}/{epochs}] Loss: {epoch_loss:.6f}")
 

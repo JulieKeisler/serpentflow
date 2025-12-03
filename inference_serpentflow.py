@@ -40,6 +40,9 @@ def main():
     parser.add_argument("--name_config", type=str, default="ERA5", help="Dataset configuration name")
     parser.add_argument("--save_name_model", type=str, default="experiment", help="Model identifier (checkpoint name)")
     parser.add_argument("--save_name", type=str, default="experiment", help="Output result file name")
+    parser.add_argument("--method", type=str, default="fourier", help="Low pass method")
+    parser.add_argument("--inference_method", type=str, default="dopri5", help="Solver used for vector field")
+
 
     args = parser.parse_args()
 
@@ -53,8 +56,8 @@ def main():
     # Dataset
     # ---------------------------
     print("Loading SerpentFlow dataset for inference...")
-    dataset = SerpentFlowDataset(args.path_A, args.r_cut)
-
+    dataset = SerpentFlowDataset(args.path_A, args.r_cut, method=args.method)
+    
     # ---------------------------
     # Model definition
     # ---------------------------
@@ -103,7 +106,9 @@ def main():
         dataloader=dataloader,
         model_to=model,
         device=device,
-        filename=f"data/results/{args.save_name}.pt"
+        filename=f"data/results/{args.save_name}.pt",
+        method=args.inference_method,
+        temp_dir=f"data/temp_dir/{args.save_name}/"
     )
 
     print("Inference complete.")
