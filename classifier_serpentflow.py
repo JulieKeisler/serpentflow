@@ -162,7 +162,7 @@ def main():
         if args.method == "fourier":
             lp_train_A = low_pass_tensor_batch(train_A, r_cut, apply_noise=False, method=args.method)
         else:
-            lp_train_A = train_A
+            lp_train_A = low_pass_tensor_batch(train_A, r_cut, apply_noise=False, method=args.method)#train_A
         lp_train_B = low_pass_tensor_batch(train_B, r_cut, apply_noise=False, method=args.method)
         
 
@@ -202,7 +202,7 @@ def main():
         if args.method == "fourier":
             lp_test_A = low_pass_tensor_batch(test_A, r_cut, apply_noise=False, method=args.method)
         else:
-            lp_test_A = test_A
+            lp_test_A = low_pass_tensor_batch(test_A, r_cut, apply_noise=False, method=args.method) #test_A
         lp_test_A = normalize_using_stats(lp_test_A, min_A, max_A)
         lp_test_B = normalize_using_stats(low_pass_tensor_batch(test_B, r_cut, apply_noise=False, method=args.method), min_B, max_B)
         ds_lp_test = TwoClassImageDataset(lp_test_A, lp_test_B)
