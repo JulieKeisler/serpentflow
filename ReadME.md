@@ -153,5 +153,4 @@ SerpentFlow/
 
 If you use this code in your research, please cite:
 
-Julie Keisler, Anastase Charantonis, Yannig Goude, Boutheina Oueslati, Claire Monteleoni.  
-**Generative Unpaired Domain Alignment via Shared-Structure Decomposition**. Preprint, 2025.
+[Julie Keisler, Anastase Alexandre Charantonis, Yannig Goude, Boutheina Oueslati, Claire Monteleoni. SerpentFlow: Generative Unpaired Domain Alignment via Shared-Structure Decomposition. 2025. ⟨hal-05425230⟩](https://hal.science/hal-05425230)
