@@ -28,8 +28,19 @@ def make_model_cfg(data_type: str):
 
     if data_type == 'ERA5':
         return dict(
-            base_ch=96,
-            ch_mult=(1, 2, 2)
+            base_ch=64,
+            ch_mult=(1, 2, 3),
+            num_res_blocks=3, 
+            attention_type="local_cross",
+            time_factor=2
+        )
+    if data_type == 'SAFRAN':
+        return dict(
+            base_ch=32,
+            ch_mult=(1, 2),
+            attention_resolutions=(), 
+            num_res_blocks=2, 
+            dropout=0.0
         )
 
     if data_type == 'CIFAR10':
@@ -62,8 +73,9 @@ def make_train_cfg(data_type: str):
             accum_iter=1
         ),
         'ERA5': dict(
-            batch_size=64,
-            epochs=200,
+            batch_size=256,
+            batch_size_inf=2048,
+            epochs=400,
             lr=2e-4,
             accum_iter=1
         ),
@@ -72,7 +84,15 @@ def make_train_cfg(data_type: str):
             epochs=100,
             lr=2e-4,
             accum_iter=4
-        )
+        ),
+        'SAFRAN': dict(
+            batch_size=128,
+            batch_size_inf=1024,
+            epochs=200,
+            lr=2e-4,
+            accum_iter=1
+        ),
+        
     }
 
     if data_type not in configs:

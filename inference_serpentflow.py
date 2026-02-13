@@ -27,7 +27,7 @@ from utils.training_utils import EMA
 from src.datasets import SerpentFlowDataset
 from utils.models import UNetFlow
 from utils.config import make_model_cfg, make_train_cfg
-
+import time
 
 def main():
 
@@ -41,7 +41,8 @@ def main():
     parser.add_argument("--save_name_model", type=str, default="experiment", help="Model identifier (checkpoint name)")
     parser.add_argument("--save_name", type=str, default="experiment", help="Output result file name")
     parser.add_argument("--method", type=str, default="fourier", help="Low pass method")
-    parser.add_argument("--inference_method", type=str, default="dopri5", help="Solver used for vector field")
+    parser.add_argument("--mask_path", type=str, default="")
+    parser.add_argument("--solver_method", type=str, default="dopri5", help="ODE solver method for inference")
 
 
     args = parser.parse_args()
@@ -56,17 +57,28 @@ def main():
     # Dataset
     # ---------------------------
     print("Loading SerpentFlow dataset for inference...")
+    s_time = time.time()
+
     dataset = SerpentFlowDataset(args.path_A, args.r_cut, method=args.method)
-    
+    print(f"Dataset loaded in {time.time()-s_time:.2f} seconds. Number of samples: {len(dataset)}")
+
     # ---------------------------
     # Model definition
     # ---------------------------
     print("Building model...")
+    s_time = time.time()
+    if args.mask_path:
+        c_in = dataset[0]["noisy"].shape[0] + 1
+    else:
+        c_in = dataset[0]["noisy"].shape[0]
     model = UNetFlow(
-        C_in=dataset[0]["noisy"].shape[0],
+        C_in=c_in,
         C_out=dataset[0]["data"].shape[0],
         **make_model_cfg(args.name_config)
     )
+    nb_params_model = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"Model built with {nb_params_model/1e6:.2f} million parameters.")
 
     # Wrap with EMA model
     model = EMA(model=model)
@@ -83,6 +95,7 @@ def main():
     except FileNotFoundError:
         print(f"ERROR: No checkpoints found for {args.save_name_model}.")
         return
+    print(f"Model ready in {time.time()-s_time:.2f} seconds.")
 
     # ---------------------------
     # DataLoader
@@ -91,11 +104,17 @@ def main():
 
     dataloader = DataLoader(
         dataset,
-        batch_size=tcfg['batch_size'],
+        batch_size=tcfg['batch_size_inf'] if 'batch_size_inf' in tcfg else tcfg['batch_size'],
         shuffle=False,
-        num_workers=4,
-        pin_memory=True
+        num_workers=8,
+        pin_memory=True,
+        persistent_workers=True
     )
+
+    if len(args.mask_path)>0:
+        mask = torch.load(args.mask_path).to(device).detach()
+    else:
+        mask=None
 
     # ---------------------------
     # Inference
@@ -107,8 +126,9 @@ def main():
         model_to=model,
         device=device,
         filename=f"data/results/{args.save_name}.pt",
-        method=args.inference_method,
-        temp_dir=f"data/temp_dir/{args.save_name}/"
+        temp_dir=f"data/temp_dir/{args.save_name}/",
+        mask=mask, 
+        method=args.solver_method
     )
 
     print("Inference complete.")

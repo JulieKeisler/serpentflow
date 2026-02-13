@@ -12,6 +12,7 @@ SerpentFlowDataset exposes:
 Both datasets are PyTorch-compatible.
 """
 
+import random
 import torch
 from torch.utils.data import Dataset
 from utils.data_utils import low_pass_tensor_batch
@@ -19,85 +20,88 @@ from utils.data_utils import low_pass_tensor_batch
 def normalize_column(x):
     mask = torch.isfinite(x)
     if not mask.any():
-        return x  # leave as-is or fill with 0
-    min_val, max_val = x[mask].min(), x[mask].max()
-    x[mask] = (x[mask] - min_val) / (max_val - min_val + 1e-8)
+        return x  # leave as-is
+    mean_val = x[mask].mean()
+    std_val  = x[mask].std()
+    x[mask] = (x[mask] - mean_val) / (std_val + 1e-8)
     return x
 
+
 class SerpentFlowDataset(Dataset):
-    """
-    Dataset for training and inference in SerpentFlow.
-
-    Given a dataset of high-resolution images, this class:
-      1) extracts a low-frequency component using a frequency cutoff r_cut
-      2) normalizes it channel-wise to [-1, 1]
-      3) optionally injects stochastic high-frequency noise
-      4) returns (noisy low-frequency input, original data) pairs
-
-    Output format (per sample):
-        {
-            "noisy": tensor (low-frequency + noise),
-            "data":  tensor (original high-resolution data)
-        }
-    """
-
-    def __init__(self, ds_path, r_cut, apply_noise=True, method="fourier"):
-        """
-        Args:
-            ds_path (str): path to torch tensor (.pt file)
-            r_cut (int): cutoff frequency for low-pass filtering
-            apply_noise (bool): whether to inject stochastic HF noise
-        """
+    def __init__(self, ds_path, r_cut, apply_noise=True, method="fourier", dual=False):
         super().__init__()
 
         self.r_cut = r_cut
-        self.method=method
+        self.method = method
         self.apply_noise = apply_noise
 
-        # Load full-resolution dataset
         self.data = torch.load(ds_path, map_location="cpu")
-
-        # Precompute low-frequency component
         lp_data = low_pass_tensor_batch(self.data, self.r_cut, apply_noise=False, method=self.method)
-
-        # Channel-wise normalization (using dataset statistics)
-
+        self.stats_data = torch.stack([
+            lp_data.mean(dim=(2,3)),
+            lp_data.std(dim=(2,3))
+        ], dim=2)
+        # Channel-wise normalization
         for c in range(lp_data.shape[1]):
             lp_data[:, c] = normalize_column(lp_data[:, c])
-
         for c in range(self.data.shape[1]):
-            self.data[:, c] = normalize_column(self.data[:, c])
+            self.data[:, c] = normalize_column(self.data[:, c])    
+        self.lp_data = lp_data
+        self.dual = dual
 
-        # Scale to [-1, 1] for neural network compatibility
-        self.data = self.data * 2 - 1
-        self.lp_data = lp_data * 2 - 1
+    def __getitem__(self, index):
+        data = self.data[index]
+        noisy_data = self.lp_data[index]
 
+        if self.apply_noise:
+            _, noise_lr = low_pass_tensor_batch(data, self.r_cut, apply_noise=True, method=self.method)
+            noisy_data = noisy_data + noise_lr
+
+        stats = self.stats_data[index]  # shape [C, 2]
+        if self.dual:
+            noisy_data = torch.randn_like(noisy_data)
+        return {
+            "noisy": noisy_data,
+            "data": data,
+            "stats": stats
+        }
     def __len__(self):
         return len(self.data)
 
+class UnpairedDataset(Dataset):
+    def __init__(self, ds_A, ds_B=None, margin=30):
+        super().__init__()
+
+        self.data_A = torch.load(ds_A, map_location="cpu")
+        self.stats_data = torch.stack([
+            self.data_A.mean(dim=(2,3)),
+            self.data_A.std(dim=(2,3))
+        ], dim=2)
+        for c in range(self.data_A.shape[1]):
+            self.data_A[:, c] = normalize_column(self.data_A[:, c])    
+        if ds_B is not None:
+            self.data_B = torch.load(ds_B, map_location="cpu")
+            for c in range(self.data_B.shape[1]):
+                self.data_B[:, c] = normalize_column(self.data_B[:, c])  
+        self.margin=margin  
+
     def __getitem__(self, index):
+        data_A = self.data_A[index]
 
-        # Ground truth (high-resolution)
-        data = self.data[index]
-
-        # Low-frequency shared component
-        noisy_data = self.lp_data[index]
-
-        # Inject stochastic high-frequency noise if enabled
-        if self.apply_noise:
-            _, noise_lr = low_pass_tensor_batch(
-                data,
-                self.r_cut,
-                apply_noise=self.apply_noise,
-                method=self.method
-            )
-            noisy_data = noisy_data + noise_lr
-
+        if hasattr(self, "data_B"):
+            rand_idx = random.randint(0, len(self.data_B) - 1)
+            data_B = self.data_B[rand_idx]
+        else:
+            data_B = data_A
+        stats = self.stats_data[index]  # shape [C, 2]
+        
         return {
-            "noisy": noisy_data,
-            "data": data
+            "noisy": data_A,
+            "data": data_B,
+            "stats": stats
         }
-
+    def __len__(self):
+        return len(self.data_A)
 
 class TwoClassImageDataset(Dataset):
     """

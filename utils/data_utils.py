@@ -14,13 +14,13 @@ import torch
 import torch.nn.functional as F
 
 
-def low_pass_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False, method="fourier"):
+def low_pass_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False, method="fourier", high=False):
     if method == "fourier":
-        return fourier_tensor_batch(imgs, r_cut, apply_noise)
+        return fourier_tensor_batch(imgs, r_cut, apply_noise, high=high)
     else:
         return low_pass_blur_ignore_nans(imgs, sigma=20-r_cut, apply_noise=apply_noise)
 
-def fourier_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False):
+def fourier_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = False, high: bool = False):
     """
     Apply a circular low-pass filter in Fourier space to a batch of images.
 
@@ -55,7 +55,10 @@ def fourier_tensor_batch(imgs: torch.Tensor, r_cut: int, apply_noise: bool = Fal
     radius = torch.sqrt((X - cx) ** 2 + (Y - cy) ** 2)
 
     # Circular low-pass filter mask
-    mask = (radius <= r_cut).float()
+    if high:
+        mask = (radius >= r_cut).float()
+    else:
+        mask = (radius <= r_cut).float()
     mask = mask[None, None, :, :]  # broadcast to (1, 1, H, W)
 
     # Fourier transform
@@ -166,16 +169,19 @@ def upsample_and_lowpass(x: torch.Tensor, target_size: tuple, cutoff: float = 0.
     Returns:
         torch.Tensor: upsampled and low-pass filtered tensor, shape (B, H, W)
     """
-
-    # Ensure batch dimension
-    if x.ndim == 2:
-        x = x.unsqueeze(0)  # (1, h, w)
-
-    B, h, w = x.shape
     H, W = target_size
+    # Ensure batch dimension
+    if x.ndim<4:
+        if x.ndim == 2:
+            x = x.unsqueeze(0)  # (1, h, w)
 
-    # Upsample in spatial domain
-    x = x.unsqueeze(1)  # (B, 1, h, w)
+        B, h, w = x.shape
+        
+        x = x.unsqueeze(1)  # (B, 1, h, w)
+
+        # Upsample in spatial domain
+    else:
+        B, C, h, w = x.shape
     x_up = F.interpolate(x, size=(H, W), mode='nearest')
     x_up = x_up.to(torch.complex64)
 

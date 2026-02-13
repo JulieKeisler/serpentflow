@@ -29,9 +29,9 @@ from utils.inference_utils import generate_grid
 from src.train import train_flow_matching
 from utils.training_utils import EMA
 from src.datasets import SerpentFlowDataset
-from utils.models import UNetFlow
+from utils.models import AttentionBlock, UNetFlow
 from utils.config import make_model_cfg, make_train_cfg
-
+import time
 
 def main():
 
@@ -59,18 +59,25 @@ def main():
     # Dataset
     # ---------------------------
     print("Loading SerpentFlow dataset...")
+    s_time = time.time()
     dataset = SerpentFlowDataset(args.path_B, args.r_cut, method=args.method)
-
+    print(f"Dataset loaded in {time.time()-s_time:.2f} seconds. Number of samples: {len(dataset)}")
     # ---------------------------
     # Model definition
     # ---------------------------
     print("Building model...")
+    s_time = time.time()
+    c_in = dataset[0]["noisy"].shape[0]
+    if args.mask_path:
+        c_in += 1
     model = UNetFlow(
-        C_in=dataset[0]["noisy"].shape[0],
+        C_in=c_in,
         C_out=dataset[0]["data"].shape[0],
         **make_model_cfg(args.name_config)
     )
+    nb_params_model = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+    print(f"Model built with {nb_params_model/1e6:.2f} million parameters.")
     # Wrap with EMA weights
     model = EMA(model=model)
 
@@ -86,7 +93,7 @@ def main():
         print(f"Loaded checkpoint from {checkpoint_path}")
     except FileNotFoundError:
         print(f"No checkpoint found for {args.save_name}. Training from scratch.")
-
+    print(f"Model ready in {time.time()-s_time:.2f} seconds.")
     # ---------------------------
     # Training configuration
     # ---------------------------
@@ -97,7 +104,7 @@ def main():
     # ---------------------------
     print("Starting Flow Matching training...")
     if len(args.mask_path)>0:
-        mask = torch.load(args.mask_path)
+        mask = torch.load(args.mask_path).to(device).detach()
     else:
         mask=None
     model = train_flow_matching(
@@ -108,24 +115,6 @@ def main():
         ckpt=checkpoint,
         mask=mask,
         **tcfg
-    )
-
-    # ---------------------------
-    # Sampling after training
-    # ---------------------------
-    print("Generating samples...")
-
-    indices = torch.randperm(len(dataset))[:args.num_generations]
-    noisy_batch = torch.stack([dataset[i]["noisy"] for i in indices]).to(device)
-
-    generate_grid(
-        model=model.model,
-        shape=dataset[0]["data"].shape,
-        n_samples=args.num_generations,
-        device=device,
-        prefix=args.save_name,
-        x=noisy_batch,
-        ds=dataset
     )
 
 
